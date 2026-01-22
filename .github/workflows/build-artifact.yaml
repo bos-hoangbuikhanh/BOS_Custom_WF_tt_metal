@@ -1,84 +1,85 @@
-name: Build Artifacts  
-  
-on:  
-  workflow_call:  
-    inputs:  
-      build-type:  
-        required: false  
-        type: string  
-        default: "Release"  
-      build-wheel:  
-        required: false  
-        type: boolean  
-        default: false  
-      publish-artifact:  
-        required: false  
-        type: boolean  
-        default: true  
-  
-permissions:  
-  packages: write  
-  
-outputs:  
-  build-artifact-name:  
-    description: "Name of the published build artifact"  
-    value: ${{ jobs.build.outputs.build_artifact_name }}  
-  wheel-artifact-name:  
-    description: "Name of the published wheel artifact"  
-    value: ${{ jobs.build-wheel.result == 'success' && jobs.build-wheel.outputs.artifact-name || '' }}  
-  
-jobs:  
-  build:  
-    runs-on: ubuntu-latest  
-    outputs:  
-      build_artifact_name: ${{ steps.upload.outputs.artifact-name }}  
-    steps:  
-      - uses: actions/checkout@v4  
-        
-      - name: Setup Build Environment  
-        run: |  
-          # Your build setup commands  
-          echo "Setting up build environment"  
-        
-      - name: Build Project  
-        run: |  
-          # Your build commands  
-          mkdir -p dist  
-          echo "Building project..."  
-          # Example: make build or cmake --build .  
-          touch dist/build-complete  
-        
-      - name: Upload Build Artifacts  
-        if: inputs.publish-artifact  
-        id: upload  
-        uses: actions/upload-artifact@v4  
-        with:  
-          name: build-artifacts-${{ github.run_id }}  
-          path: dist/  
-  
-  build-wheel:  
-    if: inputs.build-wheel  
-    runs-on: ubuntu-latest  
-    outputs:  
-      artifact-name: ${{ steps.upload.outputs.artifact-name }}  
-    steps:  
-      - uses: actions/checkout@v4  
-        
-      - name: Setup Python  
-        uses: actions/setup-python@v4  
-        with:  
-          python-version: '3.10'  
-        
-      - name: Build Wheel  
-        run: |  
-          # Your wheel build commands  
-          mkdir -p dist  
-          python setup.py bdist_wheel || echo "No wheel to build"  
-        
-      - name: Upload Wheel Artifacts  
-        if: inputs.publish-artifact  
-        id: upload  
-        uses: actions/upload-artifact@v4  
-        with:  
-          name: wheel-artifacts-${{ github.run_id }}  
+name: Build Artifacts
+
+on:
+  workflow_call:
+    inputs:
+      build-type:
+        required: false
+        type: string
+        default: "Release"
+      build-wheel:
+        required: false
+        type: boolean
+        default: false
+      publish-artifact:
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  packages: write
+
+outputs:
+  build-artifact-name:
+    description: "Name of the published build artifact"
+    value: ${{ jobs.build.outputs.build_artifact_name }}
+  wheel-artifact-name:
+    description: "Name of the published wheel artifact"
+    value: ${{ jobs.build-wheel.outputs.wheel_artifact_name }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      build_artifact_name: ${{ steps.meta.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: meta
+        run: |
+          echo "name=build-artifacts-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Build Environment
+        run: echo "Setting up build environment"
+
+      - name: Build Project
+        run: |
+          mkdir -p dist
+          echo "Building project..."
+          touch dist/build-complete
+
+      - name: Upload Build Artifacts
+        if: ${{ inputs.publish-artifact }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.name }}
+          path: dist/
+
+  build-wheel:
+    if: ${{ inputs.build-wheel }}
+    runs-on: ubuntu-latest
+    outputs:
+      wheel_artifact_name: ${{ steps.meta.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - id: meta
+        run: |
+          echo "name=wheel-artifacts-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Wheel
+        run: |
+          mkdir -p dist
+          python setup.py bdist_wheel || true
+
+      - name: Upload Wheel Artifacts
+        if: ${{ inputs.publish-artifact }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.name }}
           path: dist/*.whl
+          if-no-files-found: warn
