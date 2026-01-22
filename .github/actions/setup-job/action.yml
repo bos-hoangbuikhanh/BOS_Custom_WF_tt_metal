@@ -37,6 +37,7 @@ inputs:
     description: 'Timeout in seconds to consider a dispatch as slow for auto-triage'
     default: 60.0
     type: float
+
 runs:
   using: "composite"
   steps:
@@ -79,34 +80,12 @@ runs:
         uv pip install "$WHEEL_FILENAME"
       shell: bash
 
-    - name: Set up env vars for watcher
-      if: ${{ inputs.enable-watcher == 'true' }}
-      working-directory: ${{ inputs.path }}
-      run: |
-        echo "Enabling TT Metal Watcher"
-        echo "TT_METAL_WATCHER=120" >> $GITHUB_ENV
-        echo "TT_METAL_WATCHER_APPEND=1" >> $GITHUB_ENV
-        echo "TT_METAL_WATCHER_NOINLINE=1" >> $GITHUB_ENV
-      shell: bash
+    # Removed: hardware-specific env vars (watcher / kernel asserts / LLK asserts)
 
-    - name: Set up env vars for lightweight kernel asserts
-      if: ${{ inputs.enable-lightweight-kernel-asserts == 'true' }}
-      working-directory: ${{ inputs.path }}
-      run: |
-        echo "Enabling TT Metal Lightweight Kernel Asserts"
-        echo "TT_METAL_LIGHTWEIGHT_KERNEL_ASSERTS=1" >> $GITHUB_ENV
-      shell: bash
-
-    - name: Set up env vars for LLK asserts
-      if: ${{ inputs.enable-llk-asserts == 'true' }}
-      working-directory: ${{ inputs.path }}
-      run: |
-        echo "Enabling TT Metal LLK Asserts"
-        echo "TT_METAL_LLK_ASSERTS=1" >> $GITHUB_ENV
-      shell: bash
-
+    # NOTE: If you also want to remove tt-triage / dispatch-timeout integration
+    # (often considered infra/hardware-coupled), delete this block too.
     - name: Set up env vars for auto-triage
-      if: ${{ inputs.auto-triage == 'true' && inputs.enable-watcher != 'true' }}
+      if: ${{ inputs.auto-triage == 'true' }}
       working-directory: ${{ inputs.path }}
       run: |
         echo "Enabling detection of timeout on fast dispatch and automatically call tt-triage"
