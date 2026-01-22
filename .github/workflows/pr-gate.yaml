@@ -1,0 +1,54 @@
+name: PR Gate  
+on:  
+  pull_request:  
+    types: [opened, reopened, synchronize]  
+  workflow_dispatch:  
+  
+concurrency:  
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}  
+  cancel-in-progress: true  
+  
+permissions:  
+  contents: write  
+  pull-requests: write  
+  checks: write  
+  
+jobs:  
+  build:  
+    uses: ./.github/workflows/build-artifact.yaml  
+    with:  
+      build-type: Release  
+      build-wheel: true  
+      publish-artifact: false  
+  
+  find-changed-files:  
+    runs-on: ubuntu-latest  
+    outputs:  
+      any-code-changed: ${{ steps.find-changes.outputs.any-code-changed }}  
+      test-changed: ${{ steps.find-changes.outputs.test-changed }}  
+    steps:  
+      - id: find-changes  
+        uses: ./.github/actions/find-changed-files@main  
+  
+  unit-tests:  
+    needs: [build, find-changed-files]  
+    if: needs.find-changed-files.outputs.any-code-changed == 'true'  
+    uses: ./.github/workflows/test-workflow.yaml  
+    with:  
+      build-artifact-name: ${{ needs.build.outputs.build-artifact-name }}  
+      wheel-artifact-name: ${{ needs.build.outputs.wheel-artifact-name }}  
+  
+  workflow-status:  
+    name: PR Gate Status  
+    if: always()  
+    needs: [build, unit-tests]  
+    runs-on: ubuntu-latest  
+    steps:  
+      - name: Check if all jobs passed  
+        run: |  
+          if [[ "${{ needs.build.result }}" == "success" && "${{ needs.unit-tests.result }}" == "success" ]]; then  
+            echo "✅ All checks passed"  
+          else  
+            echo "❌ Some checks failed"  
+            exit 1  
+          fi
