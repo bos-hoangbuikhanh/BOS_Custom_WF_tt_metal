@@ -1,49 +1,49 @@
-name: Test Workflow  
-  
-on:  
-  workflow_call:  
-    inputs:  
-      build-artifact-name:  
-        required: true  
-        type: string  
-      wheel-artifact-name:  
-        required: false  
-        type: string  
-  
-jobs:  
-  test:  
-    runs-on: ubuntu-latest  
-    steps:  
-      - uses: actions/checkout@v4  
-        
-      - name: Download Build Artifacts  
-        uses: actions/download-artifact@v4  
-        with:  
-          name: ${{ inputs.build-artifact-name }}  
-          path: dist/  
-        
-      - name: Download Wheel Artifacts  
-        if: inputs.wheel-artifact-name != ''  
-        uses: actions/download-artifact@v4  
-        with:  
-          name: ${{ inputs.wheel-artifact-name }}  
-          path: dist/  
-        
-      - name: Setup Test Environment  
-        run: |  
-          # Your test setup  
-          echo "Setting up test environment"  
-          chmod +x dist/*  
-        
-      - name: Run Unit Tests  
-        run: |  
-          # Your test commands  
-          echo "Running unit tests..."  
-          # Example: python -m pytest tests/ || ./run-tests.sh  
-        
-      - name: Upload Test Results  
-        if: always()  
-        uses: actions/upload-artifact@v4  
-        with:  
-          name: test-results-${{ github.run_id }}  
+name: Test Workflow
+
+on:
+  workflow_call:
+    inputs:
+      build-artifact-name:
+        required: true
+        type: string
+      wheel-artifact-name:
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.build-artifact-name }}
+          path: dist/
+
+      - name: Download Wheel Artifacts
+        if: ${{ inputs.wheel-artifact-name != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.wheel-artifact-name }}
+          path: dist/
+
+      - name: Setup Test Environment
+        run: |
+          echo "Setting up test environment"
+          ls -lah dist
+
+      - name: Run Unit Tests
+        run: |
+          echo "Running unit tests..."
+          # put real commands here
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.run_id }}
           path: test-results/
+          if-no-files-found: warn
