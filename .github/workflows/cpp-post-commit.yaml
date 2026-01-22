@@ -1,98 +1,85 @@
-name: "[internal] ttnn unit tests impl"
-
+name: "[internal] C++ tests impl"
+# This workflow file does not run in APC (CCL runs in merge-gate and the others run in Nightly L2)
 on:
   workflow_call:
     inputs:
       timeout:
         required: false
         type: number
-        default: 40
+        default: 35
       docker-image:
         required: true
         type: string
-      wheel-artifact-name:
+      build-artifact-name:
         required: true
         type: string
       enable-watcher:
-        required: false
-        type: boolean
+        description: 'Enable watcher'
         default: false
+        type: boolean
       enable-lightweight-kernel-asserts:
         description: 'Enable lightweight kernel asserts'
-        required: false
-        type: boolean
         default: false
+        type: boolean
       enable-llk-asserts:
         description: 'Enable LLK asserts'
+        default: false
+        type: boolean
+      gtest_filter:
+        required: false
+        default: "*"
+        type: string
+        description: "Filter for gtest"
+      nightly-run:
+        description: 'Is this a nightly run'
         required: false
         type: boolean
         default: false
-      merge-gate-call:
-        required: false
-        type: boolean
-        default: false
-
-  workflow_dispatch:
-    inputs:
-      timeout:
-        required: false
-        type: number
-        default: 40
-      docker-image:
-        required: true
-        type: string
-      wheel-artifact-name:
-        required: true
-        type: string
       merge-gate-call:
         required: false
         type: boolean
         default: false
 
 jobs:
-  define-ttnn-tests:
+  define-cpp-tests:
     runs-on: ubuntu-latest
     outputs:
-      ttnn-tests: ${{ steps.compute-tests.outputs.ttnn-tests }}
+      cpp-tests: ${{ steps.compute-tests.outputs.cpp-tests }}
     steps:
       - name: Compute tests
         shell: bash
         id: compute-tests
         run: |
           set -euo pipefail
-          echo "[info] Outputing default values"
-          default_ttnn_tests='[
-            { "name": "ttnn example tests", "cmd": "./tests/scripts/run_ttnn_examples.sh", "merge_gate": true },
-            { "name": "ttnn eltwise group 1", "cmd": "pytest -n auto --timeout 300 tests/ttnn/unit_tests/operations/eltwise -xv --splits 5 --group 1 -m \"not disable_fast_runtime_mode\"", "merge_gate": false },
-            { "name": "ttnn eltwise group 2", "cmd": "pytest -n auto --timeout 300 tests/ttnn/unit_tests/operations/eltwise -xv --splits 5 --group 2 -m \"not disable_fast_runtime_mode\"", "merge_gate": false },
-            { "name": "ttnn eltwise group 3", "cmd": "pytest -n auto --timeout 300 tests/ttnn/unit_tests/operations/eltwise -xv --splits 5 --group 3 -m \"not disable_fast_runtime_mode\"", "merge_gate": false },
-            { "name": "ttnn eltwise group 4", "cmd": "pytest -n auto --timeout 300 tests/ttnn/unit_tests/operations/eltwise -xv --splits 5 --group 4 -m \"not disable_fast_runtime_mode\"", "merge_gate": false },
-            { "name": "ttnn eltwise group 5", "cmd": "pytest -n auto --timeout 300 tests/ttnn/unit_tests/operations/eltwise -xv --splits 5 --group 5 -m \"not disable_fast_runtime_mode\"", "merge_gate": false },
-            { "name": "ttnn conv group", "cmd": "pytest -n auto --timeout 300 tests/ttnn/unit_tests/operations/conv -xv -m \"not disable_fast_runtime_mode\"", "merge_gate": false },
-            { "name": "ttnn pool group", "cmd": "pytest -n auto --timeout 300 tests/ttnn/unit_tests/operations/pool -xv -m \"not disable_fast_runtime_mode\"", "merge_gate": false },
-            { "name": "ttnn matmul group", "cmd": "pytest -n auto --timeout 300 tests/ttnn/unit_tests/operations/matmul -xv -m \"not disable_fast_runtime_mode\"", "merge_gate": false },
-            { "name": "ttnn fused group", "cmd": "pytest -n auto --timeout 300 tests/ttnn/unit_tests/operations/fused -xv -m \"not disable_fast_runtime_mode\"", "merge_gate": false },
-            { "name": "ttnn transformers group", "cmd": "pytest -n auto --timeout 300 tests/ttnn/unit_tests/operations/transformers -xv -m \"not disable_fast_runtime_mode\"", "merge_gate": false },
-            { "name": "ttnn reduce and misc ops group", "cmd": "pytest -n auto --timeout 300 tests/ttnn/unit_tests/operations/reduce tests/ttnn/unit_tests/operations/debug -xv -m \"not disable_fast_runtime_mode\"", "merge_gate": false },
-            { "name": "core ttnn unit test group", "cmd": "pytest -n auto --timeout 300 tests/ttnn/unit_tests/base_functionality tests/ttnn/unit_tests/benchmarks tests/ttnn/unit_tests/tensor -xv -m \"not disable_fast_runtime_mode\"", "merge_gate": false }
+          echo "[info] Outputting default values"
+          default_cpp_tests='[
+            { "name": "All C++", "cmd": "{ [ \"$GTEST_FILTER\" = \"*NIGHTLY_*\" ]; } && (echo \"Running unit_tests_legacy C++ nightly (nightly filter: $GTEST_FILTER)\" && ./build/test/tt_metal/unit_tests_legacy --gtest_filter=*NIGHTLY_*) && ./tests/scripts/run_cpp_unit_tests.sh", "nightly": true },
+            { "name": "dispatch", "cmd": "TT_METAL_ENABLE_ERISC_IRAM=1 ./build/test/tt_metal/unit_tests_dispatch --gtest_filter=*", "nightly": true },
+            { "name": "dispatch multicmd queue", "cmd": "TT_METAL_ENABLE_ERISC_IRAM=1 TT_METAL_GTEST_NUM_HW_CQS=2 ./build/test/tt_metal/unit_tests_dispatch --gtest_filter=UnitMeshMultiCQ*Fixture.*", "nightly": true },
+            { "name": "distributed", "cmd": "./build/test/tt_metal/distributed/distributed_unit_tests --gtest_filter=*", "nightly": true, "auto-triage": true },
+            { "name": "eth, misc, and user kernel path", "cmd": "./build/test/tt_metal/unit_tests_eth && ./build/test/tt_metal/unit_tests_misc && rm -rf /tmp/kernels && mkdir -p /tmp/kernels && TT_METAL_KERNEL_PATH=/tmp/kernels ./build/test/tt_metal/unit_tests_api --gtest_filter=CompileProgramWithKernelPathEnvVarFixture.*", "nightly": true, "auto-triage": true },
+            { "name": "tools", "cmd": "./tests/scripts/run_tools_tests.sh && ./build/test/tt_metal/unit_tests_debug_tools --gtest_filter=* && ./build/test/tt_metal/unit_tests_inspector --gtest_filter=*", "nightly": true, "auto-triage": false },
+            { "name": "ttnn tensor accessor", "cmd": "./build/test/ttnn/unit_tests_ttnn_accessor", "nightly": true, "auto-triage": true },
+            { "name": "Nightly data movement", "cmd": "./build/test/tt_metal/unit_tests_data_movement --gtest_filter=$GTEST_FILTER", "nightly": true, "auto-triage": true },
+            { "name": "Nightly TTNN university lab examples", "cmd": "./build/test/ttnn/lab_examples/test_lab_eltwise_binary", "nightly": true, "auto-triage": true }
           ]'
-          echo "$default_ttnn_tests" | jq
+          echo "$default_cpp_tests" | jq
 
-          requested_ttnn_tests="$default_ttnn_tests"
-          requested_ttnn_tests=$(jq --argjson merge_gate_call "${{ inputs.merge-gate-call }}" '[.[] | select(.merge_gate == $merge_gate_call)]' <<< "$requested_ttnn_tests")
-          echo "[info] after filtering for requested workflow tests: $requested_ttnn_tests"
+          requested_cpp_tests="$default_cpp_tests"
+          requested_cpp_tests=$(jq --argjson nightly_run "${{ inputs.nightly-run }}" '[.[] | select(.nightly == $nightly_run)]' <<< "$requested_cpp_tests")
+          echo "[info] after filtering for requested workflow tests: $requested_cpp_tests"
 
-          echo "$requested_ttnn_tests" | jq -e 'if type != "array" then error("Not a valid JSON array") elif length == 0 then error("Test list is empty") else . end' && echo "Valid test configs"
-          echo "ttnn-tests=$(echo $requested_ttnn_tests | tr -d '\n')" >> "$GITHUB_OUTPUT"
+          echo "$requested_cpp_tests" | jq -e 'if type != "array" then error("Not a valid JSON array") elif length == 0 then error("Test list is empty") else . end' && echo "Valid test configs"
+          echo "cpp-tests=$(echo $requested_cpp_tests | tr -d '\n')" >> "$GITHUB_OUTPUT"
           echo "[info] Showing GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
 
-  ttnn:
-    needs: define-ttnn-tests
+  cpp-unit-tests:
+    needs: define-cpp-tests
     strategy:
       fail-fast: false
       matrix:
-        test-group: ${{ fromJSON(needs.define-ttnn-tests.outputs.ttnn-tests) }}
+        test-group: ${{ fromJSON(needs.define-cpp-tests.outputs.cpp-tests) }}
     name: ${{ matrix.test-group.name }}
     runs-on: ubuntu-latest
     container:
@@ -100,9 +87,12 @@ jobs:
       env:
         LOGURU_LEVEL: INFO
         PYTHONPATH: /work
+        LD_LIBRARY_PATH: /work/build/lib
+        GTEST_OUTPUT: xml:/work/generated/test_reports/
+        LSAN_OPTIONS: suppressions=/usr/share/tt-metalium/lsan.supp
       volumes:
         - ${{ github.workspace }}/docker-job:/work
-      options: "-e TT_GH_CI_INFRA"
+      options: "--device /dev/tenstorrent"
     defaults:
       run:
         shell: bash
@@ -118,21 +108,18 @@ jobs:
         uses: ./docker-job/.github/actions/setup-job
         timeout-minutes: 10
         with:
-          wheel-artifact-name: ${{ inputs.wheel-artifact-name }}
-          enable-watcher: ${{ inputs.enable-watcher || false }}
-          enable-lightweight-kernel-asserts: ${{ inputs.enable-lightweight-kernel-asserts || false }}
-          enable-llk-asserts: ${{ inputs.enable-llk-asserts || false }}
-          auto-triage: ${{ !inputs.enable-watcher }}
-          slow-dispatch-timeout: 10.0
-
-      - name: Set ttnn fast runtime if exists in config
-        if: ${{ matrix.test-group.fast_runtime_mode_off }}
-        run: |
-          echo "TTNN_CONFIG_OVERRIDES={\"enable_fast_runtime_mode\": false}" >> $GITHUB_ENV
+          build-artifact-name: ${{ inputs.build-artifact-name }}
+          enable-watcher: ${{ inputs.enable-watcher }}
+          enable-lightweight-kernel-asserts: ${{ inputs.enable-lightweight-kernel-asserts }}
+          enable-llk-asserts: ${{ inputs.enable-llk-asserts }}
+          auto-triage: ${{ !inputs.enable-watcher && matrix.test-group.auto-triage }}
+          slow-dispatch-timeout: 10
 
       - name: ${{ matrix.test-group.name }} tests
-        timeout-minutes: ${{ inputs.timeout }}
+        timeout-minutes: ${{ inputs.nightly-run && 45 || inputs.timeout }}
         run: |
+          mkdir -p generated/test_reports
+          GTEST_FILTER="${{ inputs.gtest_filter }}"
           ${{ matrix.test-group.cmd }}
 
       - uses: tenstorrent/tt-metal/.github/actions/slack-report@main
@@ -147,5 +134,6 @@ jobs:
         with:
           prefix: "test_reports_"
 
-      - uses: tenstorrent/tt-metal/.github/actions/cleanup@main
-        if: always()
+      - name: Generate gtest annotations on failure
+        uses: tenstorrent/tt-metal/.github/actions/generate-gtest-failure-message@main
+        if: ${{ failure() }}
