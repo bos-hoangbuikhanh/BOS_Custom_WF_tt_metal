@@ -66,7 +66,7 @@ env:
 
 jobs:
   check-docker-images:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     outputs:
       ci-build-exists: ${{ steps.images.outputs.ci-build-exists }}
       ci-build-tag: ${{ steps.tags.outputs.ci-build-tag }}
@@ -260,7 +260,7 @@ jobs:
     name: "🔄 Update latest tag"
     needs: check-docker-images
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
 
