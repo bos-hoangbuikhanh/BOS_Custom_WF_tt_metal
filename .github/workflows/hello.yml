@@ -1,0 +1,22 @@
+name: Print hello.txt on PR
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  print-file:
+    runs-on: self-hosted
+    steps:
+      - name: Check file exists
+        run: |
+          if [ ! -f /home/hoangb/hello.txt ]; then
+            echo "❌ /home/hoangb/hello.txt not found"
+            exit 1
+          fi
+
+      - name: Print hello.txt
+        run: |
+          echo "===== hello.txt content ====="
+          cat /home/hoangb/hello.txt
+          echo "============================="
