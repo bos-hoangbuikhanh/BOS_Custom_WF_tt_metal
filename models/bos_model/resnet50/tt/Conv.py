@@ -1,0 +1,46 @@
+import ttnn
+
+
+def convNxN(
+    x,
+    device,
+    input_height,
+    input_width,
+    in_channels,
+    out_channels,
+    batch_size,
+    weight_tensor,
+    bias_tensor,
+    conv_config,
+    compute_config,
+    dtype,
+    return_output_dim,
+    return_weights_and_bias,
+    kernel_size,
+    stride,
+    padding,
+    dilation=(1, 1),
+    groups=1,
+):
+    """NxN convolution"""
+    return ttnn.conv2d(
+        input_tensor=x,
+        device=device,
+        input_height=input_height,
+        input_width=input_width,
+        in_channels=in_channels,
+        out_channels=out_channels,
+        batch_size=batch_size,
+        weight_tensor=weight_tensor,
+        bias_tensor=bias_tensor,
+        conv_config=conv_config,
+        compute_config=compute_config,
+        dtype=dtype,
+        return_output_dim=return_output_dim,
+        return_weights_and_bias=return_weights_and_bias,
+        kernel_size=kernel_size,
+        stride=stride,
+        padding=padding,
+        dilation=dilation,
+        groups=groups,
+    )

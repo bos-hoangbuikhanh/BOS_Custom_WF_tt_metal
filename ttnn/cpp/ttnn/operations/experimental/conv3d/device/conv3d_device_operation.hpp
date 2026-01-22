@@ -1,0 +1,54 @@
+// SPDX-FileCopyrightText: © 2025 Tenstorrent AI ULC
+//
+// SPDX-License-Identifier: Apache-2.0
+
+#pragma once
+
+#include <array>
+#include <cstdint>
+#include <optional>
+#include <vector>
+#include <variant>
+
+#include "ttnn/tensor/tensor.hpp"
+#include "ttnn/device_operation.hpp"
+#include "ttnn/decorators.hpp"
+#include "ttnn/operations/core/compute_kernel/compute_kernel_config.hpp"
+#include "conv3d_device_operation_types.hpp"
+#include "conv3d_program_factory.hpp"
+
+namespace ttnn::operations::experimental::conv3d {
+
+struct Conv3dDeviceOperation {
+    using operation_attributes_t = conv3d::operation_attributes_t;
+    using tensor_args_t = conv3d::tensor_args_t;
+    using spec_return_value_t = conv3d::spec_return_value_t;
+    using tensor_return_value_t = conv3d::tensor_return_value_t;
+    using program_factory_t = std::variant<program::Conv3dProgramFactory>;
+    using shared_variables_t = program::Conv3dProgramFactory::shared_variables_t;
+
+    static program_factory_t select_program_factory(const operation_attributes_t&, const tensor_args_t&);
+
+    static void validate_on_program_cache_miss(const operation_attributes_t&, const tensor_args_t&);
+    static void validate_on_program_cache_hit(const operation_attributes_t&, const tensor_args_t&);
+
+    static spec_return_value_t compute_output_specs(const operation_attributes_t&, const tensor_args_t&);
+    static tensor_return_value_t create_output_tensors(const operation_attributes_t&, const tensor_args_t&);
+
+    static tt::stl::hash::hash_t compute_program_hash(const operation_attributes_t&, const tensor_args_t&);
+
+    static std::tuple<operation_attributes_t, tensor_args_t> invoke(
+        const Tensor& input_tensor,
+        const Tensor& weight_tensor,
+        const std::optional<Tensor>& bias_tensor,
+        const Conv3dConfig& config,
+        const std::optional<MemoryConfig>& memory_config,
+        std::optional<DeviceComputeKernelConfig> compute_kernel_config);
+};
+
+}  // namespace ttnn::operations::experimental::conv3d
+
+namespace ttnn::prim {
+constexpr auto conv3d =
+    ttnn::register_operation<"ttnn::prim::conv3d", ttnn::operations::experimental::conv3d::Conv3dDeviceOperation>();
+}  // namespace ttnn::prim

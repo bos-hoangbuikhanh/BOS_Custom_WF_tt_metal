@@ -1,0 +1,78 @@
+# SPDX-FileCopyrightText: © 2025 Tenstorrent AI ULC
+
+# SPDX-License-Identifier: Apache-2.0
+
+import ttnn
+from models.bos_model.ufld_v2.tt.common import TtnnUFLDV2Conv2D
+
+try:
+    from tracy import signpost
+
+    use_signpost = True
+except ModuleNotFoundError:
+    use_signpost = False
+
+
+class TtnnBasicBlock:
+    def __init__(
+        self,
+        conv_args,
+        conv_pth,
+        device,
+        name,
+        is_downsample=False,
+        blk_sharded=False,
+        precision=ttnn.bfloat16,
+        core_count=None,
+    ):
+        self.is_downsample = is_downsample
+        self.name = name
+        self.conv1 = TtnnUFLDV2Conv2D(
+            conv_args.conv1,
+            conv_pth.conv1,
+            device=device,
+            activation=ttnn.UnaryWithParam(ttnn.UnaryOpType.RELU),
+            is_blk=blk_sharded,
+            activation_dtype=ttnn.bfloat8_b,
+            core_count=core_count,
+        )
+        self.conv2 = TtnnUFLDV2Conv2D(
+            conv_args.conv2,
+            conv_pth.conv2,
+            device=device,
+            activation=None,
+            is_blk=blk_sharded,
+            activation_dtype=precision,
+            core_count=core_count,
+        )
+        if is_downsample:
+            self.downsample = TtnnUFLDV2Conv2D(
+                conv_args.downsample[0],
+                conv_pth.downsample,
+                device=device,
+                activation=None,
+                is_blk=blk_sharded,
+                activation_dtype=ttnn.bfloat16,
+                core_count=core_count,
+                dealloc_act=True,
+            )
+
+    def __call__(self, input):
+        if use_signpost:
+            signpost(header=f"BasicBlock: {self.name}")
+
+        x_identity = input
+        x, out_ht, out_wdth = self.conv1(input)
+        x, out_ht, out_wdth = self.conv2(x)
+        if self.is_downsample:
+            x_identity, out_ht, out_wdth = self.downsample(input)
+        if x_identity.is_sharded():
+            if x.memory_config().shard_spec.grid != x_identity.memory_config().shard_spec.grid:
+                memory_config_req = x.memory_config()
+                memory_config_req.shard_spec.shape = x_identity.memory_config().shard_spec.shape
+                memory_config_req.shard_spec.grid = x_identity.memory_config().shard_spec.grid
+                x = ttnn.reshard(x, memory_config_req)
+        x = ttnn.add(x, x_identity, memory_config=x.memory_config())
+        x = ttnn.relu(x)
+        ttnn.deallocate(x_identity)
+        return x

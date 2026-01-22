@@ -1,0 +1,454 @@
+import pytest
+import torch
+import transformers
+from datasets import load_dataset
+from transformers import AutoImageProcessor
+from ttnn.model_preprocessing import preprocess_model_parameters
+
+import ttnn
+from models.bos_model.vit import ttnn_optimized_sharded_vit_a0
+from models.bos_model.vit.tests.util import load_torch_model
+from tests.ttnn.utils_for_testing import assert_with_pcc
+
+
+@pytest.mark.parametrize("model_name", ["google/vit-base-patch16-224"])
+@pytest.mark.parametrize("batch_size", [5])
+@pytest.mark.parametrize("image_size", [224])
+@pytest.mark.parametrize("image_channels", [3])
+def test_vit_patch_embeddings(device, model_name, batch_size, image_size, image_channels, model_location_generator):
+    torch.manual_seed(0)
+
+    model = load_torch_model(model_location_generator, embedding=True)
+    config = model.config
+
+    shape = (batch_size, image_channels, image_size, image_size)
+    torch_pixel_values = torch.zeros(shape, dtype=torch.float).uniform_(-1, 1)
+    torch_output, *_ = model.vit.embeddings.patch_embeddings(torch_pixel_values)
+
+    parameters = preprocess_model_parameters(
+        initialize_model=lambda: model,
+        device=device,
+        custom_preprocessor=ttnn_optimized_sharded_vit_a0.custom_preprocessor,
+    )
+
+    torch_pixel_values = torch.permute(torch_pixel_values, (0, 2, 3, 1))
+    torch_pixel_values = torch.nn.functional.pad(torch_pixel_values, (0, 1, 0, 0, 0, 0, 0, 0))
+    batch_size, img_h, img_w, img_c = torch_pixel_values.shape  # permuted input NHWC
+    patch_size = config.patch_size  # 16
+    torch_pixel_values = torch_pixel_values.reshape(batch_size, img_h, img_w // patch_size, 4 * patch_size)
+    N, H, W, C = torch_pixel_values.shape
+    shard_grid = ttnn.CoreRangeSet(
+        {
+            ttnn.CoreRange(
+                ttnn.CoreCoord(0, 0),
+                ttnn.CoreCoord(3, 1),
+            ),
+        }
+    )
+    n_cores = 8
+    shard_spec = ttnn.ShardSpec(shard_grid, [N * H * W // n_cores, C], ttnn.ShardOrientation.ROW_MAJOR)
+
+    pixel_values = ttnn.from_torch(
+        torch_pixel_values,
+        dtype=ttnn.bfloat16,
+        layout=ttnn.ROW_MAJOR_LAYOUT,
+        device=device,
+        memory_config=ttnn.MemoryConfig(
+            ttnn.TensorMemoryLayout.HEIGHT_SHARDED,
+            ttnn.BufferType.L1,
+            shard_spec,
+        ),
+    )
+    config = ttnn_optimized_sharded_vit_a0.update_model_config(config, batch_size)
+    output = ttnn_optimized_sharded_vit_a0.vit_patch_embeddings(
+        config, pixel_values, parameters=parameters, unittest_check=True
+    )
+    output = ttnn.to_torch(output)
+
+    assert_with_pcc(torch_output, output[0], 0.999)
+
+
+@pytest.mark.parametrize("model_name", ["google/vit-base-patch16-224"])
+@pytest.mark.parametrize("batch_size", [5])
+@pytest.mark.parametrize("image_size", [224])
+@pytest.mark.parametrize("image_channels", [3])
+def test_vit_embeddings(device, model_name, batch_size, image_size, image_channels, model_location_generator):
+    torch.manual_seed(0)
+
+    config = transformers.ViTConfig.from_pretrained(model_name)
+    config = ttnn_optimized_sharded_vit_a0.update_model_config(config, batch_size)
+    model = load_torch_model(model_location_generator, embedding=True)
+
+    dataset = load_dataset("huggingface/cats-image", revision="ccdec0af347ae11c5315146402c3e16c8bbf4149")
+    image = dataset["test"]["image"][0]
+    image_processor = AutoImageProcessor.from_pretrained(model_name)
+    torch_pixel_values = image_processor(image, return_tensors="pt").pixel_values
+    torch_pixel_values = torch_pixel_values.repeat(batch_size, 1, 1, 1)
+    torch_output, *_ = model.vit.embeddings(torch_pixel_values)
+
+    # cls_token & position embeddings expand to batch_size
+    # TODO: pass batch_size to preprocess_model_parameters
+    model_state_dict = model.state_dict()
+    torch_cls_token = model_state_dict["vit.embeddings.cls_token"]
+    torch_position_embeddings = model_state_dict["vit.embeddings.position_embeddings"]
+    if batch_size > 1:
+        torch_cls_token = torch.nn.Parameter(torch_cls_token.expand(batch_size, -1, -1))
+        torch_position_embeddings = torch.nn.Parameter(torch_position_embeddings.expand(batch_size, -1, -1))
+    else:
+        torch_cls_token = torch.nn.Parameter(torch_cls_token)
+        torch_position_embeddings = torch.nn.Parameter(torch_position_embeddings)
+    cls_token = ttnn.from_torch(torch_cls_token, dtype=ttnn.bfloat16, layout=ttnn.ROW_MAJOR_LAYOUT, device=device)
+    position_embeddings = ttnn.from_torch(
+        torch_position_embeddings, dtype=ttnn.bfloat8_b, layout=ttnn.TILE_LAYOUT, device=device
+    )
+
+    parameters = preprocess_model_parameters(
+        initialize_model=lambda: model,
+        device=device,
+        custom_preprocessor=ttnn_optimized_sharded_vit_a0.custom_preprocessor,
+    )
+
+    torch_pixel_values = torch.permute(torch_pixel_values, (0, 2, 3, 1))
+    torch_pixel_values = torch.nn.functional.pad(torch_pixel_values, (0, 1, 0, 0, 0, 0, 0, 0))
+    batch_size, img_h, img_w, img_c = torch_pixel_values.shape  # permuted input NHWC
+    patch_size = config.patch_size  # 16
+    torch_pixel_values = torch_pixel_values.reshape(batch_size, img_h, img_w // patch_size, 4 * patch_size)
+    N, H, W, C = torch_pixel_values.shape
+    shard_grid = ttnn.CoreRangeSet(
+        {
+            ttnn.CoreRange(
+                ttnn.CoreCoord(0, 0),
+                ttnn.CoreCoord(3, 1),
+            ),
+        }
+    )
+    n_cores = 8
+    shard_spec = ttnn.ShardSpec(shard_grid, [N * H * W // n_cores, C], ttnn.ShardOrientation.ROW_MAJOR)
+
+    pixel_values = ttnn.from_torch(
+        torch_pixel_values,
+        dtype=ttnn.bfloat16,
+        layout=ttnn.ROW_MAJOR_LAYOUT,
+        device=device,
+        memory_config=ttnn.MemoryConfig(
+            ttnn.TensorMemoryLayout.HEIGHT_SHARDED,
+            ttnn.BufferType.L1,
+            shard_spec,
+        ),
+    )
+
+    output = ttnn_optimized_sharded_vit_a0.vit_embeddings(
+        config,
+        pixel_values,
+        cls_token,
+        position_embeddings,
+        parameters=parameters,
+    )
+    output = ttnn.to_torch(output)
+    assert_with_pcc(torch_output, output[0][:197:], 0.999)
+
+
+@pytest.mark.parametrize("model_name", ["google/vit-base-patch16-224"])
+@pytest.mark.parametrize("batch_size", [5])
+@pytest.mark.parametrize("sequence_size", [224])  # padded from 197 to 224
+def test_vit_attention(device, model_name, batch_size, sequence_size):
+    torch.manual_seed(0)
+
+    config = transformers.ViTConfig.from_pretrained(model_name)
+    config = ttnn_optimized_sharded_vit_a0.update_model_config(config, batch_size)
+    model = transformers.models.vit.modeling_vit.ViTAttention(config).eval()
+
+    shape = (batch_size, sequence_size, config.hidden_size)
+    torch_hidden_states = torch.zeros(shape, dtype=torch.float).uniform_(-1, 1)
+    torch_output, *_ = model(torch_hidden_states)
+
+    parameters = preprocess_model_parameters(
+        initialize_model=lambda: model,
+        device=device,
+        custom_preprocessor=ttnn_optimized_sharded_vit_a0.custom_preprocessor,
+    )
+
+    hidden_states = ttnn.from_torch(
+        torch_hidden_states,
+        dtype=ttnn.bfloat8_b,
+        layout=ttnn.TILE_LAYOUT,
+        device=device,
+        memory_config=ttnn.L1_MEMORY_CONFIG,
+    )
+
+    encoder_input = ttnn.to_memory_config(
+        hidden_states,
+        memory_config=ttnn.create_sharded_memory_config(
+            hidden_states.shape,
+            core_grid=config.core_grid,
+            strategy=ttnn.ShardStrategy.BLOCK,
+            orientation=ttnn.ShardOrientation.COL_MAJOR,
+        ),
+        dtype=ttnn.bfloat8_b,
+    )
+    ttnn.deallocate(hidden_states)
+
+    output = ttnn_optimized_sharded_vit_a0.vit_attention(
+        config,
+        encoder_input,
+        parameters=parameters,
+    )
+    output = ttnn.to_torch(output)
+
+    assert_with_pcc(torch_output, output, 0.999)
+
+
+@pytest.mark.parametrize("model_name", ["google/vit-base-patch16-224"])
+@pytest.mark.parametrize("batch_size", [5])
+@pytest.mark.parametrize("sequence_size", [224])  # padded from 197 to 224
+def test_vit_intermediate(device, model_name, batch_size, sequence_size):
+    torch.manual_seed(0)
+
+    config = transformers.ViTConfig.from_pretrained(model_name)
+    config = ttnn_optimized_sharded_vit_a0.update_model_config(config, batch_size)
+    model = transformers.models.vit.modeling_vit.ViTIntermediate(config).eval()
+
+    shape = (batch_size, sequence_size, config.hidden_size)
+    torch_hidden_states = torch.zeros(shape, dtype=torch.float).uniform_(-1, 1)
+
+    torch_output = model(torch_hidden_states)
+
+    parameters = preprocess_model_parameters(
+        initialize_model=lambda: model.to(torch.bfloat16),
+        device=device,
+    )
+
+    hidden_states = ttnn.from_torch(torch_hidden_states, dtype=ttnn.bfloat8_b, layout=ttnn.TILE_LAYOUT, device=device)
+
+    output = ttnn_optimized_sharded_vit_a0.vit_intermediate(
+        config,
+        hidden_states,
+        parameters=parameters,
+    )
+    output = ttnn.to_torch(output)
+
+    assert_with_pcc(torch_output, output.to(torch_output.dtype), 0.9984)
+
+
+@pytest.mark.parametrize("model_name", ["google/vit-base-patch16-224"])
+@pytest.mark.parametrize("batch_size", [5])
+@pytest.mark.parametrize("sequence_size", [224])  # padded from 197 to 224
+def test_vit_output(device, model_name, batch_size, sequence_size):
+    torch.manual_seed(0)
+
+    config = transformers.ViTConfig.from_pretrained(model_name)
+    config = ttnn_optimized_sharded_vit_a0.update_model_config(config, batch_size)
+    model = transformers.models.vit.modeling_vit.ViTOutput(config).eval()
+
+    shape = (batch_size, sequence_size, config.intermediate_size)
+    torch_intermediate = torch.zeros(shape, dtype=torch.float).uniform_(-1, 1)
+
+    shape = (batch_size, sequence_size, config.hidden_size)
+    torch_residual = torch.zeros(shape, dtype=torch.float).uniform_(-1, 1)
+
+    torch_output = model(torch_intermediate, torch_residual)
+
+    parameters = preprocess_model_parameters(
+        initialize_model=lambda: model,
+        device=device,
+    )
+
+    intermediate = ttnn.from_torch(torch_intermediate, dtype=ttnn.bfloat8_b, layout=ttnn.TILE_LAYOUT, device=device)
+    residual = ttnn.from_torch(torch_residual, dtype=ttnn.bfloat8_b, layout=ttnn.TILE_LAYOUT, device=device)
+
+    residual_sh = ttnn.to_memory_config(
+        residual,
+        memory_config=ttnn.create_sharded_memory_config(
+            residual.shape,
+            core_grid=config.core_grid,
+            strategy=ttnn.ShardStrategy.BLOCK,
+            orientation=ttnn.ShardOrientation.COL_MAJOR,
+        ),
+        dtype=ttnn.bfloat8_b,
+    )
+    ttnn.deallocate(residual)
+
+    output = ttnn_optimized_sharded_vit_a0.vit_output(
+        config,
+        intermediate,
+        residual_sh,
+        parameters=parameters,
+    )
+    output = ttnn.to_torch(output)
+
+    assert_with_pcc(torch_output, output.to(torch_output.dtype), 0.999)
+
+
+@pytest.mark.parametrize("model_name", ["google/vit-base-patch16-224"])
+@pytest.mark.parametrize("batch_size", [5])
+@pytest.mark.parametrize("sequence_size", [224])  # padded from 197 to 224
+def test_vit_layer(device, model_name, batch_size, sequence_size, model_location_generator):
+    torch.manual_seed(0)
+
+    config = transformers.ViTConfig.from_pretrained(model_name)
+    config = ttnn_optimized_sharded_vit_a0.update_model_config(config, batch_size)
+    model = load_torch_model(model_location_generator, embedding=True).vit.encoder.layer[0]
+
+    shape = (batch_size, sequence_size, config.hidden_size)
+    torch_hidden_states = torch.zeros(shape, dtype=torch.float).uniform_(-1, 1)
+    torch_output, *_ = model(torch_hidden_states)
+
+    parameters = preprocess_model_parameters(
+        initialize_model=lambda: model,
+        custom_preprocessor=ttnn_optimized_sharded_vit_a0.custom_preprocessor,
+        device=device,
+    )
+
+    hidden_states = ttnn.from_torch(
+        torch_hidden_states,
+        dtype=ttnn.bfloat8_b,
+        layout=ttnn.TILE_LAYOUT,
+        device=device,
+        memory_config=ttnn.L1_MEMORY_CONFIG,
+    )
+
+    encoder_input = ttnn.to_memory_config(
+        hidden_states,
+        memory_config=ttnn.create_sharded_memory_config(
+            hidden_states.shape,
+            core_grid=config.core_grid,
+            strategy=ttnn.ShardStrategy.BLOCK,
+            orientation=ttnn.ShardOrientation.COL_MAJOR,
+        ),
+        dtype=ttnn.bfloat8_b,
+    )
+    ttnn.deallocate(hidden_states)
+
+    output = ttnn_optimized_sharded_vit_a0.vit_layer(
+        config,
+        encoder_input,
+        parameters=parameters,
+    )
+    output = ttnn.to_torch(output)
+
+    # 0.9966
+    assert_with_pcc(torch_output, output, 0.996)
+
+
+@pytest.mark.parametrize("model_name", ["google/vit-base-patch16-224"])
+@pytest.mark.parametrize("batch_size", [5])
+@pytest.mark.parametrize("sequence_size", [224])  ## padded from 197 to 224
+def test_vit_encoder(device, model_name, batch_size, sequence_size, model_location_generator):
+    torch.manual_seed(0)
+
+    model = load_torch_model(model_location_generator, embedding=True)
+    config = model.config
+    model = model.vit.encoder
+    model = model.to(torch.float32)
+    config = ttnn_optimized_sharded_vit_a0.update_model_config(config, batch_size)
+
+    shape = (batch_size, sequence_size, config.hidden_size)
+    torch_hidden_states = torch.zeros(shape, dtype=torch.float).uniform_(-1, 1)
+    torch_output = model(torch_hidden_states).last_hidden_state
+
+    parameters = preprocess_model_parameters(
+        initialize_model=lambda: model,
+        custom_preprocessor=ttnn_optimized_sharded_vit_a0.custom_preprocessor,
+        device=device,
+    )
+
+    hidden_states = ttnn.from_torch(
+        torch_hidden_states,
+        dtype=ttnn.bfloat8_b,
+        layout=ttnn.TILE_LAYOUT,
+        device=device,
+        memory_config=ttnn.L1_MEMORY_CONFIG,
+    )
+
+    output = ttnn_optimized_sharded_vit_a0.vit_encoder(
+        config,
+        hidden_states,
+        parameters=parameters,
+    )
+    output = ttnn.to_torch(output)
+
+    # 0.9605
+    assert_with_pcc(torch_output, output, 0.96)
+
+
+@pytest.mark.parametrize("model_name", ["google/vit-base-patch16-224"])
+@pytest.mark.parametrize("batch_size", [5])
+@pytest.mark.parametrize("image_size", [224])
+@pytest.mark.parametrize("image_channels", [3])
+@pytest.mark.parametrize("sequence_size", [224])
+def test_vit(device, model_name, batch_size, image_size, image_channels, sequence_size, model_location_generator):
+    torch.manual_seed(0)
+
+    model = load_torch_model(model_location_generator, embedding=True)
+    config = model.config
+    config = ttnn_optimized_sharded_vit_a0.update_model_config(config, batch_size)
+    dataset = load_dataset("huggingface/cats-image", revision="ccdec0af347ae11c5315146402c3e16c8bbf4149")
+    image = dataset["test"]["image"][0]
+    image_processor = AutoImageProcessor.from_pretrained(model_name)
+    torch_pixel_values = image_processor(image, return_tensors="pt").pixel_values
+    torch_pixel_values = torch_pixel_values.repeat(batch_size, 1, 1, 1)
+    torch_output, *_ = model(torch_pixel_values).logits
+
+    # cls_token & position embeddings expand to batch_size
+    # TODO: pass batch_size to preprocess_model_parameters
+    model_state_dict = model.state_dict()
+    torch_cls_token = model_state_dict["vit.embeddings.cls_token"]
+    torch_position_embeddings = model_state_dict["vit.embeddings.position_embeddings"]
+    if batch_size > 1:
+        torch_cls_token = torch.nn.Parameter(torch_cls_token.expand(batch_size, -1, -1))
+        torch_position_embeddings = torch.nn.Parameter(torch_position_embeddings.expand(batch_size, -1, -1))
+    else:
+        torch_cls_token = torch.nn.Parameter(torch_cls_token)
+        torch_position_embeddings = torch.nn.Parameter(torch_position_embeddings)
+    cls_token = ttnn.from_torch(torch_cls_token, dtype=ttnn.bfloat16, layout=ttnn.ROW_MAJOR_LAYOUT, device=device)
+    position_embeddings = ttnn.from_torch(
+        torch_position_embeddings, dtype=ttnn.bfloat8_b, layout=ttnn.TILE_LAYOUT, device=device
+    )
+
+    parameters = preprocess_model_parameters(
+        initialize_model=lambda: model,
+        device=device,
+        custom_preprocessor=ttnn_optimized_sharded_vit_a0.custom_preprocessor,
+    )
+
+    torch_pixel_values = torch.permute(torch_pixel_values, (0, 2, 3, 1))
+    torch_pixel_values = torch.nn.functional.pad(torch_pixel_values, (0, 1, 0, 0, 0, 0, 0, 0))
+    batch_size, img_h, img_w, img_c = torch_pixel_values.shape  # permuted input NHWC
+    patch_size = config.patch_size  # 16
+    torch_pixel_values = torch_pixel_values.reshape(batch_size, img_h, img_w // patch_size, 4 * patch_size)
+    N, H, W, C = torch_pixel_values.shape
+
+    shard_grid = ttnn.CoreRangeSet(
+        {
+            ttnn.CoreRange(
+                ttnn.CoreCoord(0, 0),
+                ttnn.CoreCoord(4, 3),
+            ),
+        }
+    )
+    n_cores = 20
+    shard_spec = ttnn.ShardSpec(shard_grid, [N * H * W // n_cores, C], ttnn.ShardOrientation.ROW_MAJOR)
+
+    pixel_values = ttnn.from_torch(
+        torch_pixel_values,
+        dtype=ttnn.bfloat16,
+        layout=ttnn.ROW_MAJOR_LAYOUT,
+        device=device,
+        memory_config=ttnn.MemoryConfig(
+            ttnn.TensorMemoryLayout.HEIGHT_SHARDED,
+            ttnn.BufferType.L1,
+            shard_spec,
+        ),
+    )
+
+    output = ttnn_optimized_sharded_vit_a0.vit(
+        config,
+        pixel_values,
+        cls_token,
+        position_embeddings,
+        parameters=parameters,
+    )
+    output = ttnn.to_torch(output)
+    # 1000 classes slicing
+    # 0.8801
+    assert_with_pcc(torch_output, output[0, 0, :1000], 0.87)

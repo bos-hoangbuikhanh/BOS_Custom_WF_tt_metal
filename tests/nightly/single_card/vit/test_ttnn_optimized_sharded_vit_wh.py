@@ -1,0 +1,1 @@
+../../../../models/demos/wormhole/vit/tests/test_ttnn_optimized_sharded_vit_wh.py

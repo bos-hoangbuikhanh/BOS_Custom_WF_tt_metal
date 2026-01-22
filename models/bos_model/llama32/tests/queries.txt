@@ -1,0 +1,51 @@
+# Basic knowledge
+What is 2 + 3?
+What color is the sky on a clear day?
+Which is bigger, a cat or an elephant?
+How many days are there in a week?
+What is the opposite of hot?
+
+# Simple language understanding
+Rewrite this sentence in simpler words: The child was extremely happy.
+What does the word tiny mean?
+Give one synonym for fast.
+Complete the sentence: Birds can ___.
+Is this polite: Could I please have that?
+
+# Introduce memory facts
+My name is Alex. What is my name?
+I have a blue car. What color is my car?
+I like pizza more than burgers. What food do I prefer?
+I live in France. Which country do I live in?
+Remember this number: 42.
+
+# Follow-up memory checks
+What number did I ask you to remember?
+Is my car red or blue?
+Based on what I said earlier, do I prefer pizza or burgers?
+What language is commonly spoken where I live?
+What was my name again?
+
+# Context & reasoning
+I have two dogs and one cat. How many pets do I have?
+If I adopt one more cat, how many cats do I have now?
+I wake up at 7 AM every day. Is that morning or evening?
+If I wake up one hour later tomorrow, what time will I wake up?
+If you have 5 apples and eat 2, how many are left?
+
+# Context updates
+I changed my mind. My car is now green. What color is my car?
+Earlier, what color did I say my car was?
+I will tell you a word: apple. Repeat it.
+What was the word I just asked you to repeat?
+Is apple a fruit or an animal?
+
+# Light logic & common sense
+Can a fish fly?
+If it is raining, do you need an umbrella?
+What happens to ice when it gets warm?
+If you drop a ball, does it go up or down?
+Which comes first in the alphabet, B or D?
+
+# Conversation recall
+What was my very first question in this conversation?

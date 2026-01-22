@@ -1,0 +1,6 @@
+# ----------------- YoloV8s ----------------------------
+
+py-cpuinfo==9.0.0 # Required for Supervision
+supervision==0.25.1 # Required for HQ-Yolo
+ultralytics==8.3.162 # Required for HQ-Yolo
+ultralytics-thop==2.0.14 # Comes with Ultralytics
